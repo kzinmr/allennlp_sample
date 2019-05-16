@@ -4,7 +4,7 @@ import torch
 import torch.optim as optim
 import numpy as np
 import pandas as pd
-from scipy.special import expit
+from scipy.special import softmax
 from tqdm import tqdm
 
 from allennlp.data import Instance
@@ -25,7 +25,7 @@ from allennlp.modules.token_embedders.bert_token_embedder import PretrainedBertE
 from allennlp.modules.seq2vec_encoders import Seq2VecEncoder
 from allennlp.nn.util import get_text_field_mask, move_to_device
 
-from allennlp.training.metrics import CategoricalAccuracy, F1Measure
+from allennlp.training.metrics import BooleanAccuracy, F1Measure
 
 from allennlp.training.trainer import Trainer
 from allennlp.data.iterators import BucketIterator, DataIterator, BasicIterator
@@ -33,15 +33,15 @@ from allennlp.data.iterators import BucketIterator, DataIterator, BasicIterator
 from pathlib import Path
 
 text_col = 'wakati_jumanpp'
-label_cols = [  # 'true_class_0',
-    'true_class_1001', 'true_class_1002', 'true_class_1003', 'true_class_2001',
-    'true_class_2002', 'true_class_2003', 'true_class_2004', 'true_class_2005', 'true_class_2006',
-    'true_class_2007']
+label_cols = ['true_class_0',
+              'true_class_1001', 'true_class_1002', 'true_class_1003', 'true_class_2001',
+              'true_class_2002', 'true_class_2003', 'true_class_2004', 'true_class_2005', 'true_class_2006',
+              'true_class_2007']
 
 torch.manual_seed(1)
 
-EMBEDDING_DIM = 300
-HIDDEN_DIM = 100
+# EMBEDDING_DIM = 300
+# HIDDEN_DIM = 100
 MAX_SEQ_LEN = 200
 N_EPOCHS = 1
 TESTING = True
@@ -59,7 +59,7 @@ class DocumentClassifierPredictor:
 
     def _extract_data(self, batch) -> np.ndarray:
         out_dict = self.model(**batch)
-        return expit(tonp(out_dict["class_logits"]))
+        return softmax(tonp(out_dict["class_logits"]), axis=1)
 
     def predict(self, ds: Iterable[Instance]) -> np.ndarray:
         pred_generator = self.iterator(ds, num_epochs=1, shuffle=False)
@@ -128,7 +128,7 @@ class BasicClassifier(Model):
         self.hidden2tag = torch.nn.Linear(in_features=encoder.get_output_dim(),
                                           out_features=len(label_cols)
                                           )
-        self.accuracy = CategoricalAccuracy()
+        self.accuracy = BooleanAccuracy()
         self.f1_measure = F1Measure(1)  # FBetaMeasure
 
     def forward(
@@ -148,18 +148,22 @@ class BasicClassifier(Model):
         output = {"class_logits": class_logits}
 
         if label is not None:
+            max_pred = class_logits.max(dim=1)[1]
+            max_gold = label.max(dim=1)[1]
+            self.accuracy(max_pred, max_gold)
             output["loss"] = torch.nn.BCEWithLogitsLoss()(class_logits, label)
 
         return output
 
-    # def get_metrics(
-    #     self,
-    #     reset: bool = False
-    # ) -> Dict[str, float]:
-    #     return {"accuracy": self.accuracy.get_metric(reset),
-    #             "precision": self.f1_measure.get_metric(reset)[0],
-    #             "recall": self.f1_measure.get_metric(reset)[1],
-    #             "f1_measure": self.f1_measure.get_metric(reset)[2]}
+    def get_metrics(
+        self,
+        reset: bool = False
+    ) -> Dict[str, float]:
+        return {"accuracy": self.accuracy.get_metric(reset),
+                #             "precision": self.f1_measure.get_metric(reset)[0],
+                #             "recall": self.f1_measure.get_metric(reset)[1],
+                #             "f1_measure": self.f1_measure.get_metric(reset)[2]
+                }
 
 
 if __name__ == "__main__":
@@ -202,7 +206,7 @@ if __name__ == "__main__":
 
     # Train ######
     if torch.cuda.is_available():
-        cuda_device = 1
+        cuda_device = 0
         model = model.cuda(cuda_device)
     else:
         cuda_device = -1
